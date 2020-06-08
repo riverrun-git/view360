@@ -1,0 +1,11 @@
+{
+    "riverrun-server": {
+        "application" : {
+            "name": "riverrun example server"
+        },
+        "webserver" : {
+            "protocol": "http",
+            "port": 4321 
+        }
+    }
+}

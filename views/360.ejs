@@ -1,0 +1,872 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title><%= title %></title>
+    <link rel="stylesheet" type="text/css" href="/stylesheet.css">
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/360.js?20200121"></script>
+    <script src="/img-comp.js"></script>
+  </head>
+  <body onload="initPage()">
+    <script>
+      function getParameterByName(name, url) {
+        if (!url) url = window.location.href;
+        name = name.replace(/[\[\]]/g, '\\$&');
+        var regex = new RegExp('[?&]' + name + '(=([^&#]*)|&|#|$)'),
+        results = regex.exec(url);
+        if (!results) return null;
+        if (!results[2]) return '';
+        return decodeURIComponent(results[2].replace(/\+/g, ' '));
+      }   
+      function initPage() {
+        let selector = document.getElementById("select-frames");
+        selector.value = "48"; //default
+        setFrames();
+        selector = document.getElementById("select-direction");
+        selector.value = "1"; //default anticlockwise
+        setDirection();
+        setFramesRecorded(0);
+        selectProject();
+        if (getParameterByName("messages")) {
+          document.getElementById("messages").hidden = false;
+        }
+      }
+      function scrollToBottom() {
+        window.scrollTo({top: document.body.scrollHeight, behavior: "smooth"});
+      }
+
+      let recording = false;
+      let frames = 48;
+      let direction = 1;
+      let frames_recorded = 0;
+      let project_name = null;
+      let project_images = [];
+      let crop_aspect_ratio = "any";
+
+      const message = (topic, data) => {
+        const list = document.getElementById("messages");
+        const listitem = document.createElement('li');
+        listitem.innerHTML = "<strong>"+topic+"</strong>: "+JSON.stringify(data);
+        list.insertBefore(listitem, list.firstChild);
+        while (list.childElementCount > 20) {
+          list.removeChild(list.lastChild);
+        }
+      };
+
+      const socket = io.connect(window.location.host);
+      socket.on("connect", () => {
+        function subscribe(topic) {
+          let subscribe_data = {topic: topic};
+          socket.emit("subscribe", subscribe_data);
+          message("subscribe->", subscribe_data)
+        }
+        document.getElementById("messages").innerHTML = "";
+        message("connect", {});
+        subscribe("turntable_model");
+        subscribe("camera_model");
+        subscribe("camera_battery");
+        subscribe("turntable_command");
+        subscribe("turntable_ok");
+        subscribe("turntable_event");
+        subscribe("camera_images");
+        subscribe("camera_preview");
+        subscribe("project_images");
+        subscribe("project_directories");
+        subscribe("crop_progress");
+        subscribe("enhance_progress");
+        subscribe("enhanced_image_ready");
+      });
+      socket.on("ding", (data) => {
+        //document.getElementById("messages").innerHTML = "";
+        message("->ding", data)
+        console.log("ding "+data);
+        socket.emit("dong", data);
+        message("dong->", data);
+        console.log("donged");
+      });
+      socket.on("update", data => {
+        message("->update", data);
+        if (data.topic === "turntable_model") {
+          document.getElementById("turntable-model").innerHTML = data.value;
+        } else if (data.topic === "camera_model") {
+          document.getElementById("camera-model").innerHTML = data.value;
+        } else if (data.topic === "camera_battery" && data.value !== "undefined") {
+          document.getElementById("camera-battery").innerHTML = data.value;
+        } else if (data.topic === "camera_images") {
+          const newFiles = data.value;
+          document.getElementById("last-image").innerHTML = data.value.length === 0 ? "none" : data.value[data.value.length-1];
+          if (data.value.length === 0) {
+            document.getElementById("last-image-captured").hidden = true;
+          } else {
+            document.getElementById("last-image-captured").hidden = false;
+            document.getElementById("last-image-captured").height = `${maxImageSize().height}`;
+            document.getElementById("last-image-captured").src = data.value[data.value.length-1];
+          }
+          // one more image seen
+          setFramesRecorded(data.value.length);
+          if (recording) {
+            // time to rotate the turntable
+            rotate();
+          } 
+        } else if (data.topic === "camera_preview") {
+          console.log(`PREVIEW "${data.value}"`);
+          document.getElementById("last-image").innerHTML = data.value;
+          if (data.value === "") {
+            document.getElementById("last-image-captured").hidden = true;
+          } else {
+            document.getElementById("last-image-captured").hidden = false;
+            document.getElementById("last-image-captured").height = `${maxImageSize().height}`;
+            document.getElementById("last-image-captured").src = data.value+"?"+new Date().getTime();
+          }
+          scrollToBottom();
+        } else if (data.topic === "project_images") {
+          project_images = data.value;
+          document.getElementById("project-images-count").innerHTML = `${project_images.length} image${project_images.length === 1 ? "" : "s"}`;
+          scrollToBottom();
+        } else if (data.topic === "turntable_event" && data.value === "TB_END" && recording === true) {
+          // turntable finished spinning - do we need to take another picture?
+          if (frames_recorded < getFrames()) {
+            shoot();
+          } else {
+            // end of recording
+            recording = false;
+            message("Finished",`recorded ${getFrames()} frames.`);
+          }
+        } else if (data.topic === "crop_progress") {
+          if (data.value && data.value.file && data.value.done && data.value.total) {
+            document.getElementById("cropping-progress-file").innerHTML = `${data.value.done} of ${data.value.total} ${data.value.file}`;
+          }
+          if (data.value.done === data.value.total) {
+            show_cropping_result();
+            scrollToBottom();
+          } else {
+            show_cropping_progress(data.value.file);
+            scrollToBottom();
+          }
+        } else if (data.topic === "enhance_progress") {
+          if (data.value && data.value.file && data.value.done && data.value.total) {
+            document.getElementById("enhancing-progress-file").innerHTML = `${data.value.done} of ${data.value.total} ${data.value.file}`;
+          }
+          if (data.value.done === data.value.total) {
+            show_enhancing_result();
+            scrollToBottom();
+          } else {
+            show_enhancing_progress(data.value.file);
+            scrollToBottom();
+          }
+        } else if (data.topic === "project_directories") {
+          // build the project selector
+          const selector = document.getElementById("project-selector");
+          // remove all options
+          while(selector.length > 0) {
+            selector.remove(0);
+          }
+          console.log("Selector empty");
+          // first entry
+          let option = document.createElement("option");
+          option.text = "--- Select ---";
+          option.disabled = true;
+          option.selected = true;
+          selector.add(option);
+          for (let directory of data.value.sort()) {
+            option = document.createElement("option");
+            option.text = directory;
+            option.value = directory;
+            selector.add(option);
+          }
+        } else if (data.topic === "enhanced_image_ready") {
+          if (data.value.image) {
+            const image_after = document.getElementById("image-after");
+            image_after.src = data.value.image+"?"+Date.now();
+          }
+        }
+      });
+      socket.on("result", data => {
+        message("result=", data);
+        if (data.method === "combine_images" && data.value && data.value.file) {
+          show_combined_image(data.value.file);
+        } else if (data.method === "select_project") {
+          if (data.error) {
+            window.alert(data.error);
+          } else {
+            project_name = data.value.name;
+            const elements = document.getElementsByClassName("project-name");
+            for (let element of elements) {
+              element.innerHTML = project_name;
+            }
+          }
+        }
+      });
+      socket.on("fail", data => {
+        message("fail", data);
+      });
+      function shoot() {
+        const call_data = {method: "shoot", arguments: {}};
+        socket.emit("call", call_data);
+        message("call", call_data);
+      }
+      function preview(active) {
+        const call_data = {method: "preview", arguments: {active: active}};
+        socket.emit("call", call_data);
+        message("call", call_data);
+      }
+      function rotate() {
+        const call_data = {method: "rotate", arguments: {direction: getDirection(), angle: getAngle()}};
+        socket.emit("call", call_data);
+        message("call", call_data);
+      }
+      function reset_button() {
+        if (window.confirm(`Delete all camera image files?`)) {
+          const call_data = {method: "cleanup", arguments: {name: name}};
+          socket.emit("call", call_data);
+          message("call", call_data);
+        }
+      }
+      function copy_images_button() {
+        if (window.confirm(`Copy all camera files to project ${project_name}?`)) {
+          const call_data = {method: "copy_images", arguments: {project: project_name}};
+          socket.emit("call", call_data);
+          message("call", call_data);
+        }
+      }
+      let previewActive = false;
+      function camera_preview_button() {
+        previewActive = !previewActive;
+        document.getElementById("take-picture-button").disabled = previewActive;
+        document.getElementById("rotate-once-button").disabled = previewActive;
+        document.getElementById("record-button").disabled = previewActive;
+        preview(previewActive);
+      }
+      function camera_shoot_button() {
+        shoot();
+      }
+      function rotate_button() {
+        rotate();
+      }
+      function record_button() {
+        setFramesRecorded(0);
+        recording = true;
+        // start by taking a picture
+        shoot();
+      }
+      function preview_button() {
+        function imageLoaded(index) {
+          if (index === 1) {
+            scrollToBottom();
+          }
+        }
+        document.getElementById("project-preview").hidden = false;
+        new View360("project-preview",{max_width:maxImageSize().width,max_height:maxImageSize().height,showFilename:true, onImageLoaded: imageLoaded}, project_images);
+      }
+      function combine_button(number, invert) {
+        // send a combine() command to the server
+        const call_data = {method: "combine_images", arguments: {number: number, invert: invert}};
+        socket.emit("call", call_data);
+        message("call", call_data);
+        document.getElementById("generating-combined").hidden = false;
+        document.getElementById("generating-combined").innerHTML = "Generating combined image...";
+        document.getElementById("crop-div").hidden = true;
+        scrollToBottom();
+      }
+      function crop_button() {
+        const call_data = {method: "crop_images", arguments: {crop_w: crop_w, crop_h: crop_h, crop_x: crop_x, crop_y: crop_y}};
+        socket.emit("call", call_data);
+        message("call", call_data);
+        document.getElementById("cropping-images").hidden = false;
+      }
+      function view_360_button() {
+        show_cropping_result();
+      }
+      function maxImageSize() {
+        return {width: Math.round(window.innerWidth*0.85), height: Math.round(window.innerHeight*0.85)};
+      }
+      
+      function show_progress(filename, element) {
+        if (filename) {
+          const image = document.getElementById(element);
+          if (image.hidden) {
+            image.height = `${maxImageSize().height}`;
+            image.hidden = false;
+            image.onload = () => {
+              //console.log(`Progress Image ${image.naturalWidth}x${image.naturalHeight}`);
+              const scaleFactorWidth = maxImageSize().width / image.naturalWidth;
+              const scaleFactorHeight = maxImageSize().height / image.naturalHeight;
+              const scaleFactor = Math.min(scaleFactorWidth, scaleFactorHeight);
+              image.height = `${scaleFactor*image.naturalHeight}`;
+              image.width = `${scaleFactor*image.naturalWidth}`;
+            }
+          }
+          image.src = filename+"?"+Date.now();
+        }
+      }
+      function show_cropping_progress(filename) {
+        show_progress(filename,"cropping-progress-image");
+      }
+      function show_enhancing_progress(filename) {
+        show_progress(filename,"enhancing-progress-image");
+      }
+      function show_cropping_result() {
+        const cropped_images = [];
+        for (let image of project_images) {
+          let cropped_image = image.replace(".jpg","_crop.jpg");
+          cropped_image = cropped_image.replace(".JPG","_crop.jpg");
+          cropped_images.push(cropped_image+"?"+Date.now());
+        }
+        document.getElementById("cropping-progress-image").hidden = true;
+        console.log("Cropping progress now hidden");
+        document.getElementById("cropping-result").hidden = false;
+        document.getElementById("whitebalance-div").hidden = false;
+        const before_after_container = document.getElementById("before-after-container");
+        const image_before = document.getElementById("image-before");
+        const image_after = document.getElementById("image-after");
+        function onAllLoaded() {
+          scrollToBottom();
+          const overlay = document.getElementById("before-after-overlay");
+          compareImages(overlay);
+          const image_before = document.getElementById("image-before");
+          image_before.onload = () => {
+            adjust_white_balance_point(0, 0);
+            preview_enhance_button()
+            image_before.onload = "";
+          }
+        }
+        function onRotate(index,image) {
+          console.log(`ROT ${index}: ${image}`);
+          // what is the size of the View360 canvas?
+          const canvas_width = document.getElementById("cropping-result").width;
+          const canvas_height = document.getElementById("cropping-result").height;
+          // adjust before/after images to match
+          if (image_before.width !== canvas_width) image_before.width = canvas_width;
+          if (image_before.height !== canvas_height) image_before.height = canvas_height;
+          if (image_after.width !== canvas_width) image_after.width = canvas_width;
+          if (image_after.height !== canvas_height) image_after.height = canvas_height;
+          before_after_container.style.height = canvas_height+"px";
+          image_before.src = image;
+          image_before.image_name = image;
+          image_after.src = image;
+          //console.log(`BEFORE ${image_before.src} ${image}`);
+        }
+        new View360("cropping-result",{max_width:maxImageSize().width,max_height:maxImageSize().height,showFilename:true, onAllLoaded: onAllLoaded, onRotate: onRotate}, cropped_images);
+      }
+      function show_enhancing_result() {
+        const webp_images = [];
+        for (let image of project_images) {
+          let webp_image = image.replace(".jpg",".webp");
+          webp_image = webp_image.replace(".JPG",".webp");
+          webp_images.push(webp_image+"?"+Date.now());
+        }
+        document.getElementById("enhancing-progress-image").hidden = true;
+        document.getElementById("enhancing-result").hidden = false;
+        new View360("enhancing-result",{max_width:maxImageSize().width,max_height:maxImageSize().height,showFilename:true}, webp_images);
+      }
+      function drawImageScaled(img, ctx) {
+        ctx.imageSmoothingEnabled = false;
+        var canvas = ctx.canvas ;
+        var hRatio = canvas.width  / img.width    ;
+        var vRatio =  canvas.height / img.height  ;
+        var centerShift_x = ( canvas.width - img.width*hRatio ) / 2;
+        var centerShift_y = ( canvas.height - img.height*vRatio ) / 2;  
+        ctx.clearRect(0,0,canvas.width, canvas.height);
+        ctx.drawImage(img, 0,0, img.width, img.height,
+             centerShift_x,centerShift_y,img.width*hRatio, img.height*vRatio); 
+      }
+      let combinedImage;
+      let CombinedImageContext;
+      let mouse_down_x = 0;
+      let mouse_down_y = 0;
+      let canvas_crop_left = 0;
+      let canvas_crop_right = 0;
+      let canvas_crop_top = 0;
+      let canvas_crop_bottom = 0;
+      let crop_x = 0;
+      let crop_y = 0;
+      let crop_w = 0;
+      let crop_h = 0;
+      let whitebalance_x = 0;
+      let whitebalance_y = 0;
+      let reference_colour_red;
+      let reference_colour_green;
+      let reference_colour_blue;
+      let reference_colour_grey;
+
+      function show_combined_image(file) {
+        const MOUSE_NORMAL = "normal";
+        const MOUSE_DOWN = "down"
+        const MOUSE_SELECTING = "selecting";
+        const MOUSE_OVER_LEFT = "left";
+        const MOUSE_OVER_RIGHT = "right";
+        const MOUSE_OVER_TOP = "top";
+        const MOUSE_OVER_BOTTOM = "bottom";
+        const MOUSE_OVER_TOP_LEFT = "top-left";
+        const MOUSE_OVER_TOP_RIGHT = "top-right";
+        const MOUSE_OVER_BOTTOM_LEFT = "bottom-left";
+        const MOUSE_OVER_BOTTOM_RIGHT = "bottom-right";
+        const NEAR_ENOUGH = 4;
+
+        function mouseModeOnClick(event, rect) {
+          const mouseX = Math.round((event.clientX - rect.left)/rect.width*canvas.width);
+          const mouseY = Math.round((event.clientY - rect.top)/rect.height*canvas.height);
+          const nearLeft = (mouseY >= canvas_crop_top) && (mouseY <= canvas_crop_bottom) && (Math.abs(mouseX - canvas_crop_left) < NEAR_ENOUGH);
+          const nearRight = (mouseY >= canvas_crop_top) && (mouseY <= canvas_crop_bottom) && (Math.abs(mouseX - canvas_crop_right) < NEAR_ENOUGH);
+          const nearTop = (mouseX >= canvas_crop_left) && (mouseX <= canvas_crop_right) && (Math.abs(mouseY - canvas_crop_top) < NEAR_ENOUGH);
+          const nearBottom = (mouseX >= canvas_crop_left) && (mouseX <= canvas_crop_right) && (Math.abs(mouseY - canvas_crop_bottom) < NEAR_ENOUGH);
+          //console.log(`${canvas_crop_left}<${mouseX}<${canvas_crop_right} , ${canvas_crop_top}<${mouseY}<${canvas_crop_bottom}`);
+          if (nearLeft && nearTop) {
+            return MOUSE_OVER_TOP_LEFT;
+          } else if (nearLeft && nearBottom) {
+            return MOUSE_OVER_BOTTOM_LEFT;
+          } else if (nearRight && nearTop) {
+            return MOUSE_OVER_TOP_RIGHT;
+          } else if (nearRight && nearBottom) {
+            return MOUSE_OVER_BOTTOM_RIGHT;
+          } else if (nearLeft) {
+            return MOUSE_OVER_LEFT;
+          } else if (nearRight) {
+            return MOUSE_OVER_RIGHT;
+          } else if (nearTop) {
+            return MOUSE_OVER_TOP;
+          } else if (nearBottom) {
+            return MOUSE_OVER_BOTTOM;
+          }
+          mouse_down_x = mouseX;
+          mouse_down_y = mouseY;
+          return MOUSE_DOWN;
+        }
+
+        document.getElementById("generating-combined").innerHTML += "done";
+        const canvas = document.getElementById("combined-image");
+        combinedImage = new Image();
+        combinedImage.onload = function () {
+          console.log(`Image size ${combinedImage.naturalWidth}x${combinedImage.naturalHeight}`);
+          const canvasWidth = canvas.clientWidth;
+          const canvasHeight = canvasWidth * (combinedImage.naturalHeight / combinedImage.naturalWidth);
+          let dpi = window.devicePixelRatio;
+          let style_height = +getComputedStyle(canvas).getPropertyValue("height").slice(0, -2);
+          let style_width = +getComputedStyle(canvas).getPropertyValue("width").slice(0, -2);
+          console.log(`DPI ${dpi} STYLE HEIGHT ${style_height} WIDTH ${style_width}`);
+          //console.log(`Canvas size ${canvas.width}x${canvasHeight}`);
+          canvas.style.width = `{canvasWidth}px`;
+          canvas.style.height = `${canvasHeight}px`;
+          canvas.setAttribute('height', style_height * dpi);
+          canvas.setAttribute('width', style_width * dpi);
+          // now draw the image on the canvas
+          combinedImageContext = canvas.getContext('2d');
+          drawImageScaled(combinedImage, combinedImageContext);
+
+
+          canvas_crop_left = 0;
+          canvas_crop_right = canvasWidth*dpi;
+          canvas_crop_top = 0;
+          canvas_crop_bottom = canvasHeight*dpi;
+          crop_x = 0;
+          crop_y = 0;
+          crop_w = combinedImage.naturalWidth;
+          crop_h = combinedImage.naturalHeight;
+
+          let mouseMode = MOUSE_NORMAL;
+          adjust_crop();
+          canvas.onmousedown = (event) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseMode = mouseModeOnClick(event, rect);
+            console.log(`Mouse mode is now ${mouseMode}`)
+            if (mouseMode === MOUSE_DOWN) {
+              mouse_down_x = (event.clientX-rect.left)/rect.width*canvas.width;
+              mouse_down_y = (event.clientY-rect.top)/rect.height*canvas.height;
+            }
+            console.log("DOWN");
+            //console.log(`Drag start TOP: ${top} start clientx=${event.clientX} clienty=${event.clientY} ${JSON.stringify(rect)}`);
+          };
+          canvas.onmousemove = (event) => {
+            const rect = canvas.getBoundingClientRect();
+            if (mouseMode === MOUSE_DOWN) {
+              canvas_crop_left = mouse_down_x;
+              canvas_crop_top = mouse_down_y;
+              mouseMode = MOUSE_SELECTING;
+            }
+            if (mouseMode === MOUSE_SELECTING || mouseMode === MOUSE_OVER_RIGHT || mouseMode === MOUSE_OVER_TOP_RIGHT || mouseMode === MOUSE_OVER_BOTTOM_RIGHT) {
+              canvas_crop_right = (event.clientX-rect.left)/rect.width*canvas.width;
+            }
+            if (mouseMode === MOUSE_SELECTING || mouseMode === MOUSE_OVER_BOTTOM || mouseMode === MOUSE_OVER_BOTTOM_LEFT || mouseMode === MOUSE_OVER_BOTTOM_RIGHT) {
+              canvas_crop_bottom = (event.clientY-rect.top)/rect.height*canvas.height;
+            }
+            if (mouseMode === MOUSE_OVER_LEFT || mouseMode === MOUSE_OVER_TOP_LEFT || mouseMode === MOUSE_OVER_BOTTOM_LEFT) {
+              canvas_crop_left = (event.clientX-rect.left)/rect.width*canvas.width;
+            }
+            if (mouseMode === MOUSE_OVER_TOP || mouseMode === MOUSE_OVER_TOP_LEFT || mouseMode === MOUSE_OVER_TOP_RIGHT) {
+              canvas_crop_top = (event.clientY-rect.top)/rect.height*canvas.height;
+            }
+            if (mouseMode === MOUSE_NORMAL) {
+              const modeOnClick = mouseModeOnClick(event, rect);
+              switch (modeOnClick) {
+                case MOUSE_OVER_LEFT:
+                case MOUSE_OVER_RIGHT:
+                  canvas.style.cursor = "ew-resize";
+                  break;
+                case MOUSE_OVER_TOP:
+                case MOUSE_OVER_BOTTOM:
+                  canvas.style.cursor = "ns-resize";
+                  break;
+                case MOUSE_OVER_TOP_LEFT:
+                case MOUSE_OVER_BOTTOM_RIGHT:
+                  canvas.style.cursor = "nwse-resize";
+                  break;
+                case MOUSE_OVER_TOP_RIGHT:
+                case MOUSE_OVER_BOTTOM_LEFT:
+                  canvas.style.cursor = "nesw-resize";
+                  break;
+                default:
+                  canvas.style.cursor = "default";
+                  break;
+              }
+            } else {
+              adjust_crop();
+            }
+          }
+          canvas.onmouseup = (event) => {
+            console.log(`UP`);
+            if (mouseMode === MOUSE_SELECTING) {
+            }
+            mouseMode = MOUSE_NORMAL;
+          }
+          adjust_crop();
+          scrollToBottom();
+        }
+        combinedImage.src = file;
+        document.getElementById("crop-div").hidden = false;
+      }
+      function paintCropRegion(canvas, top, left, bottom, right) {
+        combinedImageContext.imageSmoothingEnabled = false;
+        drawImageScaled(combinedImage, combinedImageContext);
+        const context = canvas.getContext('2d');
+        const canvasHeight = canvas.height;
+        const canvasWidth = canvas.width;
+        //context.fillStyle = "rgba(0,0,0,0.4)";
+        //context.fillRect(0, 0, left, canvasHeight);
+        //context.fillRect(left, 0, right-left, top);
+        //context.fillRect(right, 0, canvasWidth-right, canvasHeight);
+        //context.fillRect(left, bottom, right-left, canvasHeight-bottom);
+        context.beginPath();
+        context.lineWidth = 1;
+        context.moveTo(left, top);
+        context.lineTo(right, top);
+        context.lineTo(right, bottom);
+        context.lineTo(left, bottom);
+        context.lineTo(left, top);
+        context.stroke();
+      }
+      function adjust_crop(mouseMode) {
+        function adjust_aspect_ratio(horizontal, vertical) {
+          const ratio = horizontal/vertical;
+          let pixel_width = pixel_right-pixel_left;
+          let pixel_height = pixel_bottom-pixel_top;
+          if (pixel_height * ratio > pixel_width) {
+            pixel_width = pixel_height * ratio;
+            pixel_right = pixel_left + pixel_width;
+          }
+          if (pixel_width / ratio > pixel_height) {
+            pixel_height = pixel_width / ratio;
+            pixel_bottom = pixel_top + pixel_height;
+          }
+          console.log(`MM ${mouseMode}`);
+          return {bottom: pixel_bottom, right: pixel_right };
+        }
+        const canvas = document.getElementById("combined-image");
+        // first we translate our canvas coordinates to image coordinates
+        const pixel_left = canvas_crop_left/canvas.width*combinedImage.naturalWidth;
+        let pixel_right = canvas_crop_right/canvas.width*combinedImage.naturalWidth;
+        const pixel_top = canvas_crop_top/canvas.height*combinedImage.naturalHeight;
+        let pixel_bottom = canvas_crop_bottom/canvas.height*combinedImage.naturalHeight;
+        // next we enforce the aspect ratio
+        if (crop_aspect_ratio === "1:1") {
+          let { bottom, right } = adjust_aspect_ratio(1,1);
+          pixel_bottom = bottom;
+          pixel_right = right;
+        } else if (crop_aspect_ratio === "4:3") {
+          let { bottom, right } = adjust_aspect_ratio(4,3);
+          pixel_bottom = bottom;
+          pixel_right = right;
+        } else if (crop_aspect_ratio === "16:9") {
+          let { bottom, right } = adjust_aspect_ratio(16,9);
+          pixel_bottom = bottom;
+          pixel_right = right;
+        } else if (crop_aspect_ratio === "2:1") {
+          let { bottom, right } = adjust_aspect_ratio(2,1);
+          pixel_bottom = bottom;
+          pixel_right = right;
+        }
+        // then we translate back to canvas coordinates;
+        canvas_crop_right = pixel_right*canvas.width/combinedImage.naturalWidth;
+        canvas_crop_bottom = pixel_bottom*canvas.height/combinedImage.naturalHeight;
+        // show the result on the canvas
+        paintCropRegion(canvas,canvas_crop_top, canvas_crop_left, canvas_crop_bottom, canvas_crop_right);
+        crop_w = Math.round(pixel_right - pixel_left);
+        crop_h = Math.round(pixel_bottom - pixel_top);
+        crop_x = Math.round(pixel_left);
+        crop_y = Math.round(pixel_top);
+        document.getElementById("crop-values").innerHTML = `${crop_w}x${crop_h}+${crop_x}+${crop_y}`;
+      }
+      // user clicked on before/after to select white balance point
+      function clicked_white_balance_point(event) {
+        const image_before = document.getElementById("image-before");
+        const rect = image_before.getBoundingClientRect();
+        const canvas_x = event.clientX - rect.left;
+        const canvas_y = event.clientY - rect.top;
+        console.log(`NEW WB POINT ${canvas_x}, ${canvas_y}`);
+        adjust_white_balance_point(canvas_x, canvas_y);
+      }
+      // pick the white balance point
+      function adjust_white_balance_point(canvas_x, canvas_y) {
+        //console.log(`UPDATE WB ${canvas_x} ${canvas_y}`);
+        const canvas = document.getElementById("cropping-result");
+        const image_before = document.getElementById("image-before");
+        const pixel_x = canvas_x*image_before.naturalWidth/canvas.width;
+        const pixel_y = canvas_y*image_before.naturalHeight/canvas.height;
+        whitebalance_x = Math.round(pixel_x);
+        whitebalance_y = Math.round(pixel_y);
+        document.getElementById("whitebalance-point").innerHTML = `x: ${whitebalance_x}, y: ${whitebalance_y}`;
+        // now read the colour value at that pixel
+        const context = canvas.getContext('2d');
+        const pixelData = context.getImageData(Math.round(canvas_x), Math.round(canvas_y),1,1).data;
+        reference_colour_red = pixelData[0];
+        reference_colour_green = pixelData[1];
+        reference_colour_blue = pixelData[2];
+        reference_colour_grey = Math.round((reference_colour_red+reference_colour_green+reference_colour_blue)/3);
+        document.getElementById("image-rgb").innerHTML = `${reference_colour_red},${reference_colour_green},${reference_colour_blue}`;
+        document.getElementById("image-grey").innerHTML = `${reference_colour_grey}`;
+        //console.log(`UPDATE WB DONE`);
+        document.getElementById("preview-enhance-button").disabled = false;
+        document.getElementById("enhance-button").disabled = false;
+      }
+      function build_enhance_arguments() {
+        let ref_colour;
+        const ref_colour_type = document.querySelector('input[name="ref-colour-type"]:checked').value;
+        switch(ref_colour_type) {
+          case "ref-colour-white":
+            ref_colour = "rgb(255,255,255)";
+            break;
+          case "ref-colour-grey-value":
+            const grey = document.getElementById("ref-colour-grey").value;
+            ref_colour = `rgb(${grey},${grey},${grey})`;
+            break;
+          case "ref-colour-image-rgb":
+            ref_colour = `rgb(${reference_colour_red},${reference_colour_green},${reference_colour_blue})`
+            break;
+          case "ref-colour-image-grey":
+            ref_colour = `rgb(${reference_colour_grey},${reference_colour_grey},${reference_colour_grey})`
+            break;
+          default:
+            console.log(`What is ${ref_colour_type}?`);
+            break;
+        }
+        const sharpen = document.getElementById("sharpen-image").checked;
+        let contrast = "0";
+        const change_contrast = document.getElementById("change-contrast").checked;
+        if (change_contrast) {
+          contrast = ""+document.getElementById("contrast-amount").value;
+        }
+        const arguments = {
+          whitebalance_x: whitebalance_x,
+          whitebalance_y: whitebalance_y,
+          ref_colour: ref_colour,
+          sharpen: sharpen,
+          contrast: contrast
+        }
+        return arguments;
+      }
+      function preview_enhance_button() {
+        const arguments = build_enhance_arguments();
+        const image_before = document.getElementById("image-before");
+        arguments.image = image_before.image_name;
+        const call_data = {
+          method: "enhance_image",
+          arguments: arguments
+        };
+        socket.emit("call", call_data);
+        message("call", call_data);
+      }
+      function enhance_button() {
+        const arguments = build_enhance_arguments();
+        const call_data = {
+          method: "enhance_all_images",
+          arguments: arguments
+        }
+        socket.emit("call", call_data);
+        message("call", call_data);
+        document.getElementById("enhancing-images").hidden = false;
+      }
+      function setFrames() {
+        const selector = document.getElementById("select-frames");
+        frames = parseInt(selector.options[selector.selectedIndex].value);
+        message(`Frames now`, frames);
+        const element = document.getElementById("total-frames");
+        element.innerHTML = `${frames}`;
+      }
+      function getFrames() {
+        return frames;
+      }
+      function setFramesRecorded(recorded) {
+        frames_recorded = recorded;
+        document.getElementById("frames-recorded").innerHTML = `${frames_recorded}`;
+      }
+      function setCropAspectRatio() {
+        const selector = document.getElementById("select-aspect-ratio");
+        crop_aspect_ratio = selector.options[selector.selectedIndex].value;
+        message(`Crop aspect ratio is now`, crop_aspect_ratio);
+      }
+      function getCropAspectRatio() {
+        return crop_aspect_ratio;
+      }
+      function setDirection() {
+        const selector = document.getElementById("select-direction");
+        direction = parseInt(selector.options[selector.selectedIndex].value);
+        message("Direction now", direction);
+        const icon = document.getElementById("rotate-icon");
+        icon.src = `/icons/rotate_${direction== 0?"right":"left"}.png`;
+      }
+      function getDirection() {
+        return direction;
+      }
+      function getAngle() {
+        const angle = 360/getFrames();
+        return angle;
+      }
+      function selectProject() {
+        // what has been selected?
+        const selector = document.getElementById("project-selector");
+        document.getElementById("processing-div").hidden = (selector.selectedIndex <= 0);
+        if (selector.selectedIndex > 0) {
+          const selected = selector.options[selector.selectedIndex];
+          const name = selected.value;
+          const call_data = {method: "select_project", arguments: {name: name}};
+          socket.emit("call", call_data);
+          message("call", call_data);
+          scrollToBottom();
+        } else {
+          const call_data = {method: "select_project", arguments: {name: ""}};
+          socket.emit("call", call_data);
+          message("call", call_data);
+        }
+      }
+    </script>
+    <h1><%= title %></h1>
+    <h2>Capture</h2>
+    <p>
+      Turntable: <span id="turntable-model"></span>&nbsp;&nbsp;&nbsp;&nbsp;
+      Camera: <span id="camera-model"></span> 
+      Battery: <span id="camera-battery">___%</span>
+    </p>
+    <button title="Delete all camera images" id="reset-button" onclick="reset_button()"><img src="/icons/cleanup.png"></button>
+    <p>Frames: 
+      <select id="select-frames" onchange="setFrames()">
+        <option value="2">2</option>
+        <option value="4">4</option>
+        <option value="8">8</option>
+        <option value="16">16</option>
+        <option value="24">24</option>
+        <option value="32">32</option>
+        <option value="48" selected>48</option>
+        <option value="60">60</option>
+      </select>
+    </p>
+    <p>Direction:
+      <select id="select-direction" onchange="setDirection()">
+        <option value="0">Clockwise</option>
+        <option value="1" selected>Anticlockwise</option>
+      </select>
+    </p>
+    <button id="camera-preview-button" title="Preview" onclick="camera_preview_button()"><img src="/icons/preview.png"></button>
+    <button id="take-picture-button" title="Take picture" onclick="camera_shoot_button()"><img src="/icons/shoot.png"></button>
+    <button id="rotate-once-button" title="Rotate once" onclick="rotate_button()"><img id="rotate-icon"></button>
+    <button id="record-button" title="Record" onclick="record_button()"><img src="/icons/record.png"></button>
+
+    <p>Last image: <span id="last-image"></span></p>
+    <img id="last-image-captured" hidden>
+    <p>Progress: <span id="frames-recorded"></span> / <span id="total-frames"></span></p>
+    <br>
+    <label for="project-selector">Select project</label>
+    <select id="project-selector" onchange="selectProject()">
+    </select>
+    <div id="processing-div">
+      <h2>Cropping <span class="project-name"></span></h2>
+      <p id="project-images-count">0 images</p>
+      <button id="copy-images-button" title="Copy camera images to project folder" onclick="copy_images_button()"><img src="/icons/copy.png"></button>
+      <button id="preview-button" title="Preview images in 360&deg;" onclick="preview_button()"><img src="/icons/pageview.png"></button>
+
+      <button id="combine-button" title="Combine all images and find darkest pixels" onclick="combine_button(0, false)"><img src="/icons/combine.png"></button>
+      <button id="combine4-button" title="Combine 4 images and find darkest pixels" onclick="combine_button(4, false)"><img src="/icons/combine4.png"></button>
+      <button id="combine-inverted-button" title="Combine all inverted images and find darkest pixels" onclick="combine_button(0, true)"><img src="/icons/combine_inverted.png"></button>
+      <button id="combine4-button" title="Combine four inverted images and find darkest pixels" onclick="combine_button(4, true)"><img src="/icons/combine4_inverted.png"></button>
+      <button id="view-360-button" title="Show 360&deg; file" onclick="view_360_button()"><img src="/icons/360.png"></button>
+      <br>
+      <canvas id="project-preview" class="view360" hidden></canvas>
+      <br>
+      <p id="generating-combined" hidden></p>
+      <div id="crop-div" hidden>
+        <canvas class="preview" id="combined-image"></canvas>
+        <p>
+          Crop <span id="crop-values"></span>
+        </p>
+        <p>Crop aspect ratio:
+          <select id="select-aspect-ratio" onchange="setCropAspectRatio()">
+            <option value="any" selected>Any</option>
+            <option value="1:1">1:1</option>
+            <option value="4:3">4:3</option>
+            <option value="16:9">16:9</option>
+            <option value="2:1">2:1</option>
+          </select>
+        </p>
+        <p>
+          <button id="crop-button" title="Perform the crops" onclick="crop_button()"><img src="/icons/crop.png"></button>
+        </p>
+        <div id="cropping-images" hidden>
+          <p>
+            Cropped image <span id="cropping-progress-file"></span>.
+          </p>
+        </div>
+        <img id="cropping-progress-image" hidden>
+        <canvas id="cropping-result" class="view360" hidden></canvas>
+      </div>
+      <div id="whitebalance-div" hidden>
+        <h2>Processing <span class="project-name"></span></h2>
+        <div id="before-after-container" class="img-comp-container">
+          <div class="img-comp-img">
+            <img id="image-after" onclick="clicked_white_balance_point(event)">
+          </div>
+          <div id="before-after-overlay" class="img-comp-img img-comp-overlay" ">
+            <img id="image-before" onclick="clicked_white_balance_point(event)">
+          </div>
+        </div>
+        <div id="whitebalance-controls">
+          <div>
+            <button id="preview-enhance-button" title="Preview image enhancement" disabled onclick="preview_enhance_button()"><img src="icons/compare.png"></button>
+            <button id="enhance-button" title="Enhance all images" disabled onclick="enhance_button()"><img src="icons/process.png"></button>
+          </div>
+          <div>
+            White balance point: <span id="whitebalance-point">click</span>
+            <br>
+            <input type="radio" name="ref-colour-type" value="ref-colour-white" checked>White 255<br>
+            <input type="radio" name="ref-colour-type" value="ref-colour-grey-value">Grey value:
+            <input type="number" name="ref-colour-grey" id="ref-colour-grey" min="0" max="255" value="220">
+            <br>
+            <input type="radio" name="ref-colour-type" value="ref-colour-image-rgb">Image RGB: <span id="image-rgb"></span><br>
+            <input type="radio" name="ref-colour-type" value="ref-colour-image-grey">Image grey value: <span id="image-grey"></span><br>
+          </div>
+          <div>
+            <input type="checkbox" name="sharpen-image" id="sharpen-image" checked>Sharpen image<br>
+            <input type="checkbox" name="change-contrast" id="change-contrast">Contrast:
+            <input type="number" name="contrast-amount" id="contrast-amount" min="-3" max="3" value="0">
+          </div>
+        </div>
+      </div>
+      <div id="enhancing-images" hidden>
+        <p>
+          Enhanced image <span id="enhancing-progress-file"></span>.
+        </p>
+      </div>
+      <img id="enhancing-progress-image" hidden>
+      <canvas id="enhancing-result" class="view360" hidden></canvas>
+    </div >
+    <ul id="messages" hidden></ul>
+  </body>
+</html>

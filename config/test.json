@@ -1,0 +1,8 @@
+{
+  "riverrun-server": {
+    "webserver" : {
+      "protocol": "http",
+      "port":  0
+    }
+  }
+}

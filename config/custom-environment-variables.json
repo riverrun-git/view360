@@ -1,0 +1,7 @@
+{
+    "riverrun-server": {
+        "secret": "RIVERRUN_SERVER_SECRET",
+        "key": "RIVERRUN_SERVER_KEY",
+        "cert": "RIVERRUN_SERVER_CERT"
+    }
+}

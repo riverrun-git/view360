@@ -1,0 +1,5 @@
+#!/bin/bash
+#export DEBUG="riverrun-turntable:* view360:*"
+export DEBUG="riverrun-turntable:* view360:* riverrun-server:*"
+rm -f $HOME/Turntable/IMG*.JPG $HOME/Turntable/IMG*.jpg
+node index.js

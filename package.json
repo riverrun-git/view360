@@ -1,0 +1,51 @@
+{
+  "_from": "riverrun-view360",
+  "_id": "riverrun-view360@1.0.7",
+  "_inBundle": false,
+  "_integrity": "sha512-PIHGXNkkUZlSq9Efs9EFCNz+L3pk/vzNXrxw4bd6DoDHVGGVhoS+01s6iqlaOs3b2zE9WOQnbt/m/wSypULsDg==",
+  "_location": "/riverrun-view360",
+  "_phantomChildren": {},
+  "_requested": {
+    "type": "tag",
+    "registry": true,
+    "raw": "riverrun-view360",
+    "name": "riverrun-view360",
+    "escapedName": "riverrun-view360",
+    "rawSpec": "",
+    "saveSpec": null,
+    "fetchSpec": "latest"
+  },
+  "_requiredBy": [
+    "#USER",
+    "/"
+  ],
+  "_resolved": "https://registry.npmjs.org/riverrun-view360/-/riverrun-view360-1.0.7.tgz",
+  "_shasum": "6972a103d14c2f39f464a4eb4daa2ee3cb416b5e",
+  "_spec": "riverrun-view360",
+  "_where": "/home/andreas/Development/node/view360",
+  "author": {
+    "name": "Andreas Schneider"
+  },
+  "bundleDependencies": false,
+  "dependencies": {
+    "chokidar": "^3.3.1",
+    "coffee": "^5.2.2",
+    "coffee-script": "^1.12.7",
+    "coffeescript": "^2.5.0",
+    "debug": "^4.1.1",
+    "jest": "^24.9.0",
+    "nan": "^2.14.0",
+    "riverrun-server": "^2.1.0",
+    "riverrun-turntable": "^1.0.49"
+  },
+  "deprecated": false,
+  "description": "Front end for taking 360 degree product images",
+  "license": "BSD-3-Clause",
+  "main": "index.js",
+  "name": "riverrun-view360",
+  "private": false,
+  "scripts": {
+    "test": "jest --watchAll --coverage"
+  },
+  "version": "1.0.7"
+}

@@ -1,0 +1,97 @@
+$image_width: 70%;
+$messages_width: 25%;
+$messages_height: 75%;
+
+button {
+  img {
+    height: 36px;
+  }
+  &:hover {
+  }
+
+ &:disabled,
+ &[disabled]{
+    img {
+      opacity: 0.2;
+    }
+  }
+}
+
+.slidecontainer {
+  width: 100%; /* Width of the outside container */
+}
+.slider {
+  width: $image_width; /* width of the image */
+  vertical-align: text-bottom;
+}
+canvas.preview {
+  width: $image_width;
+  border: 1px solid black;
+}
+
+ul#messages {
+  font-size: 0.7em;
+  position: fixed;
+  width: $messages_width;
+  height: $messages_height;
+  top: 0;
+  right: 0;
+  border: 1px solid black;
+  padding: 0.5em;
+  margin: 0.5em;
+  list-style-type: none;
+  overflow-wrap: break-word;
+}
+
+img {
+  border-radius: 10px;
+  box-shadow: 0px 0px 7px rgba(0,0,0,0.6);
+  margin: 0.5em;
+}
+.view360, .preview {
+  border-radius: 10px;
+  box-shadow: 0px 0px 7px rgba(0,0,0,0.6);
+  margin: 0.5em;
+  background: white;
+}
+
+/* Image comparson slider: https://www.w3schools.com/howto/howto_js_image_comparison.asp */
+.img-comp-container {
+  position: relative;
+  height: 200px; /*should be the same height as the images*/
+  display: block;
+}
+.img-comp-img {
+  position: absolute;
+  width: auto;
+  height: auto;
+  overflow: hidden;
+  img {
+    display: block;
+    vertical-align: middle;
+  }
+}
+.img-comp-slider {
+  position: absolute;
+  z-index: 9;
+  cursor: ew-resize;
+  /*set the appearance of the slider:*/
+  width: 40px;
+  height: 40px;
+  background-color: #808080;
+  opacity: 0.5;
+  border-radius: 50%;
+  border: 1px solid black;
+}
+
+div#whitebalance-controls {
+  width: 80%;
+  display: flex;
+  flex-direction: row;
+  justify-content: space-evenly;
+  div {
+    width: 30%;
+    margin-top: 2em;
+    margin-right: 2em;
+  }
+}
