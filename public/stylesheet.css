@@ -1,3 +1,4 @@
+/* make this 70% in production */
 button img {
   height: 36px; }
 button:disabled img, button[disabled] img {
@@ -8,12 +9,12 @@ button:disabled img, button[disabled] img {
   /* Width of the outside container */ }
 
 .slider {
-  width: 70%;
+  width: 40%;
   /* width of the image */
   vertical-align: text-bottom; }
 
 canvas.preview {
-  width: 70%;
+  width: 40%;
   border: 1px solid black; }
 
 ul#messages {

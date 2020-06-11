@@ -11,6 +11,7 @@ const chokidar = require("chokidar");
 const path = require("path");
 const app = riverrun.app;
 const os = require('os');
+const config = require("./config");
 
 const CPU_COUNT = os.cpus().length;
 debug(`Running on ${CPU_COUNT} CPUs`);
@@ -28,6 +29,22 @@ const IMAGE_PATTERN = /^(image|IMG)_\d{4}\.(jpg|JPG)$/;
 const CROPPED_IMAGE_PATTERN = /^(image|IMG)_\d{4}_crop\.(jpg|JPG)$/;
 let PROJECT_DIRECTORY = null;
 let PROJECT = null;
+
+/*
+const HOME_DIRECTORY = os.homedir();
+debug(`HOME DIRECTORY: ${HOME_DIRECTORY}`);
+const CAPTURE_DIRECTORY = config.get("view360.directory.capture",`${HOME_DIRECTORY}/Pictures/Capture/`);
+debug(`CAPTURE DIRECTORY: ${CAPTURE_DIRECTORY}`);
+const WORKING_DIRECTORY = config.get("view360.directory.capture",`${HOME_DIRECTORY}/Turntable/`);
+debug(`WORKING DIRECTORY: ${WORKING_DIRECTORY}`);
+const TMP_DIRECTORY = config.get("view360.directory.tmp",`${HOME_DIRECTORY}/tmp/`);
+const CAPTURE_IMAGE_PATTERN = /^capt\d{4}\.jpg$/;
+const PREVIEW_IMAGE_PATTERN = /^capture_preview.jpg$/;
+const IMAGE_PATTERN = /^(image|IMG)_\d{4}\.(jpg|JPG)$/;
+const CROPPED_IMAGE_PATTERN = /^(image|IMG)_\d{4}_crop\.(jpg|JPG)$/;
+let PROJECT_DIRECTORY = null;
+let PROJECT = null;
+*/
 
 function cleanupPreviewFiles() {
   debug("Do the preview cleanup");
@@ -150,11 +167,11 @@ const watchForWorkingFiles = () => {
     // publish file name
     const filename = path.basename(file_path);
     if (filename.match(IMAGE_PATTERN)) {
-      workingImageFiles.add(filename);
+      workingImageFiles.add("/"+filename);
       messaging360.publishCameraImages(Array.from(workingImageFiles.values()));
     } else if (filename.match(PREVIEW_IMAGE_PATTERN)) {
       debug("NEW PREVIEW IMAGE");
-      messaging360.publishCameraPreview(filename);
+      messaging360.publishCameraPreview("/"+filename);
     } else {
       debug(`... but ${filename} it is no match for ${IMAGE_PATTERN} or ${PREVIEW_IMAGE_PATTERN}`);
     }

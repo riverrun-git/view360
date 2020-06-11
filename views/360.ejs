@@ -54,6 +54,9 @@
         }
       };
 
+      const request_image = (filename) => {
+        return filename;
+      }
       const socket = io.connect(window.location.host);
       socket.on("connect", () => {
         function subscribe(topic) {
@@ -101,7 +104,7 @@
           } else {
             document.getElementById("last-image-captured").hidden = false;
             document.getElementById("last-image-captured").height = `${maxImageSize().height}`;
-            document.getElementById("last-image-captured").src = data.value[data.value.length-1];
+            document.getElementById("last-image-captured").src = request_image(data.value[data.value.length-1]);
           }
           // one more image seen
           setFramesRecorded(data.value.length);
@@ -117,7 +120,7 @@
           } else {
             document.getElementById("last-image-captured").hidden = false;
             document.getElementById("last-image-captured").height = `${maxImageSize().height}`;
-            document.getElementById("last-image-captured").src = data.value+"?"+new Date().getTime();
+            document.getElementById("last-image-captured").src = request_image(data.value+"?"+new Date().getTime());
           }
           scrollToBottom();
         } else if (data.topic === "project_images") {
@@ -178,7 +181,7 @@
         } else if (data.topic === "enhanced_image_ready") {
           if (data.value.image) {
             const image_after = document.getElementById("image-after");
-            image_after.src = data.value.image+"?"+Date.now();
+            image_after.src = request_image(data.value.image+"?"+Date.now());
           }
         }
       });
@@ -279,7 +282,8 @@
         show_cropping_result();
       }
       function maxImageSize() {
-        return {width: Math.round(window.innerWidth*0.85), height: Math.round(window.innerHeight*0.85)};
+        // 0.85 is a good value
+        return {width: Math.round(window.innerWidth*0.4), height: Math.round(window.innerHeight*0.4)};
       }
       
       function show_progress(filename, element) {
@@ -297,7 +301,7 @@
               image.width = `${scaleFactor*image.naturalWidth}`;
             }
           }
-          image.src = filename+"?"+Date.now();
+          image.src = request_image(filename+"?"+Date.now());
         }
       }
       function show_cropping_progress(filename) {
@@ -342,9 +346,9 @@
           if (image_after.width !== canvas_width) image_after.width = canvas_width;
           if (image_after.height !== canvas_height) image_after.height = canvas_height;
           before_after_container.style.height = canvas_height+"px";
-          image_before.src = image;
+          image_before.src = request_image(image);
           image_before.image_name = image;
-          image_after.src = image;
+          image_after.src = request_image(image);
           //console.log(`BEFORE ${image_before.src} ${image}`);
         }
         new View360("cropping-result",{max_width:maxImageSize().width,max_height:maxImageSize().height,showFilename:true, onAllLoaded: onAllLoaded, onRotate: onRotate}, cropped_images);
@@ -532,7 +536,7 @@
           adjust_crop();
           scrollToBottom();
         }
-        combinedImage.src = file;
+        combinedImage.src = request_image("/"+file);
         document.getElementById("crop-div").hidden = false;
       }
       function paintCropRegion(canvas, top, left, bottom, right) {
@@ -839,8 +843,8 @@
         </div>
         <div id="whitebalance-controls">
           <div>
-            <button id="preview-enhance-button" title="Preview image enhancement" disabled onclick="preview_enhance_button()"><img src="icons/compare.png"></button>
-            <button id="enhance-button" title="Enhance all images" disabled onclick="enhance_button()"><img src="icons/process.png"></button>
+            <button id="preview-enhance-button" title="Preview image enhancement" disabled onclick="preview_enhance_button()"><img src="/icons/compare.png"></button>
+            <button id="enhance-button" title="Enhance all images" disabled onclick="enhance_button()"><img src="/icons/process.png"></button>
           </div>
           <div>
             White balance point: <span id="whitebalance-point">click</span>
